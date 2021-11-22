@@ -1,3 +1,3 @@
-module github.com/chtombre/helvargo
+module github.com/chtombre/helvar-go
 
 go 1.17
