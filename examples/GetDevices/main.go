@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	. "github.com/chtombre/helvar-go"
 	"image/color"
@@ -24,7 +25,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	_ = groups
+	sumDevices := 0
+	for _, g := range groups {
+		sumDevices += len(g.Devices)
+	}
+
+	fmt.Printf("Found %d groups and %d devices", len(groups), sumDevices)
+	fmt.Println("Press 'Enter' to continue...")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
 }
 
 func SetColor(router Router, hexColor string){

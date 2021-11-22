@@ -163,7 +163,7 @@ func (r *Router) ExecuteCommands() {
 			println("Write to server failed:", err.Error())
 			//	os.Exit(1)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(1 * time.Millisecond)
 
 		//Tell keepalive that we just sent command to router, no need for pinging
 		//If it's full, continue
