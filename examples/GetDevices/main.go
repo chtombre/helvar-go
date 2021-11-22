@@ -2,11 +2,10 @@ package main
 
 import (
 	"fmt"
+	. "github.com/chtombre/helvar-go"
 	"image/color"
 	"os"
 	"strconv"
-
-	. "github.com/chtombre/helvar-go"
 )
 
 func main() {
@@ -19,7 +18,13 @@ func main() {
 
 	router.Initialize()
 
-	SetColor(router,"#EE9B00")
+	groups, err := router.GetGroups()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	_ = groups
 }
 
 func SetColor(router Router, hexColor string){

@@ -2,10 +2,12 @@ package helvargo
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -22,7 +24,10 @@ type Router struct {
 
 	connected bool
 
-	commandReceived chan Command
+	commandReceived *sync.Cond
+	commandsToSend chan Command
+
+	commandsReceived map[string]Command
 
 	keepAlive chan bool
 }
@@ -36,6 +41,8 @@ func (r *Router) Initialize(){
 	if !r.connected {
 		r.Connect()
 	}
+
+	r.commandsReceived = make(map[string]Command)
 }
 
 
@@ -54,15 +61,20 @@ func (r *Router) Connect() {
 	}
 
 	//setup channel for responses
-	//r.commandReceived = make(chan Command)
-	r.keepAlive = make(chan bool, 1)
 
+	r.keepAlive = make(chan bool, 1)
+	r.commandsToSend = make(chan Command)
+
+	//r.commandReceived = make(chan Command)
+	m := sync.Mutex{}
+	r.commandReceived = sync.NewCond(&m)
 	r.connection = conn
 	r.connected = true
 
-	//go r.Listener()
 
 	go r.Keepalive()
+	go r.Listener()
+	go r.ExecuteCommands()
 }
 
 func (r *Router) Disconnect() {
@@ -78,76 +90,117 @@ func (r *Router) Reconnect() {
 	r.Connect()
 }
 
-//func (r *Router) Listener(){
-//	c := bufio.NewReader(r.connection)
-//	for r.connected {
-//		response, err := c.ReadString('#')
-//		if err != nil {
-//			//skip for now
-//		}
-//
-//		command, err := ParseCommand(response)
-//		if err != nil {
-//			//skip for now
-//		}
-//		r.commandReceived <- *command
-//	}
-//}
-
-func (r *Router) SendCommand(command Command){
-	startTime := time.Now()
-	_ = startTime
-
-	strCommand := command.ToString()
-
-	println("Sendt command: %s", strCommand)
-	_, err := r.connection.Write([]byte(strCommand))
-	if err != nil {
-		println("Write to server failed:", err.Error())
-		//	os.Exit(1)
-	}
-	time.Sleep(1 * time.Millisecond)
-
-	//Tell keepalive that we just sent command to router, no need for pinging
-	//If it's full, continue
-	select {
-		case r.keepAlive <- true:
-		default:
-	}
-
-
-	//Check if command is not expecting answers
-	for _, b := range COMMAND_TYPES_DONT_LISTEN_FOR_RESPONSE {
-		if b == command.CommandType {
-			return
-		}
-	}
-
-	rc := make(chan string)
-
-	go func() {
-		c := bufio.NewReader(r.connection)
+func (r *Router) Listener(){
+	c := bufio.NewReader(r.connection)
+	for r.connected {
 		response, err := c.ReadString('#')
 		if err != nil {
 			//skip for now
 		}
 
-		rc <- response
-		close(rc)
-	}()
+		println("Response received", response)
+		command, err := ParseCommand(response)
+		if err != nil {
+			//skip for now
+		}
 
-	select {
-		case response := <- rc:
-			responseCommand, err := ParseCommand(response)
-			if err != nil {
-				//skip for now
-			}
-			println("Received response: ", responseCommand.ToString())
+		//If someone could explain what this is supposed to do? I just followed a tutorial on internet, and it just works :-p
+		r.commandReceived.L.Lock()
+		r.commandsReceived[command.ToIdentifier()] = *command
+		r.commandReceived.Broadcast()
+		r.commandReceived.L.Unlock()
+	}
+}
 
-		case <- time.After(CommandResponseTimeout):
-			//close(rc) //close the channel to indicate we're no longer interested in the response
-			println("Response took too long")
-			return
+func (r *Router) SendCommand(command Command) (string, error) {
+	r.commandsToSend <- command
+
+	//Check if command is not expecting answers
+	for _, b := range COMMAND_TYPES_DONT_LISTEN_FOR_RESPONSE {
+		if b == command.CommandType {
+			return "", nil
+		}
+	}
+
+	checkForResponse := func() Command {
+		commandId := command.ToIdentifier()
+		response, found := r.commandsReceived[commandId]
+		if found {
+			delete(r.commandsReceived, commandId)
+			return response
+		}
+		return Command{}
+	}
+
+	responseCommand := checkForResponse()
+	if responseCommand.MessageType != "" {
+		return responseCommand.Result, nil
+	}
+
+	for responseCommand.MessageType == "" {
+
+		//If someone could explain what this is supposed to do? I just followed a tutorial on internet, and it just works :-p
+		r.commandReceived.L.Lock()
+		r.commandReceived.Wait()
+		responseCommand := checkForResponse()
+		r.commandReceived.L.Unlock()
+		if responseCommand.MessageType != "" {
+			return responseCommand.Result, nil
+		}
+	}
+
+	return "", errors.New("Probably shouldn't end up here")
+}
+
+func (r *Router) ExecuteCommands() {
+	for {
+		command := <- r.commandsToSend
+		strCommand := command.ToString()
+
+		println("Sendt command: %s", strCommand)
+		_, err := r.connection.Write([]byte(strCommand))
+		if err != nil {
+			println("Write to server failed:", err.Error())
+			//	os.Exit(1)
+		}
+		time.Sleep(10 * time.Millisecond)
+
+		//Tell keepalive that we just sent command to router, no need for pinging
+		//If it's full, continue
+		select {
+			case r.keepAlive <- true:
+			default:
+		}
+
+		//rc := make(chan string)
+		//
+		//go func() {
+		//	c := bufio.NewReader(r.connection)
+		//	response, err := c.ReadString('#')
+		//	if err != nil {
+		//		//skip for now
+		//	}
+		//
+		//	rc <- response
+		//	close(rc)
+		//}()
+		//
+		//select {
+		//	case response := <- rc:
+		//		responseCommand, err := ParseCommand(response)
+		//		if err != nil {
+		//			//skip for now
+		//		}
+		//		println("Received response: ", responseCommand.ToString())
+		//		//return responseCommand.Result, nil
+		//		r.commandReceived <- *responseCommand
+		//
+		//	case <- time.After(CommandResponseTimeout):
+		//		//close(rc) //close the channel to indicate we're no longer interested in the response
+		//		println("Response took too long")
+		//		//return "", errors.New("Response took to long")
+		//		r.commandReceived <-
+		//}
 	}
 }
 

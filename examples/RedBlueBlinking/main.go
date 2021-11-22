@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"time"
 
-	. "helvargo"
+	. "github.com/chtombre/helvar-go"
 )
 
 func main() {

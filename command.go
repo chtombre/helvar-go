@@ -102,6 +102,19 @@ func (c *Command) buildBaseParameters() []CommandParameter {
 	}
 }
 
+func (c *Command) ToIdentifier() string {
+	var parameters []CommandParameter
+	parameters = append(parameters, c.Params...)
+
+	var stringParams []string
+	for _, param := range parameters {
+		stringParams = append(stringParams, param.ToString())
+	}
+	result := strings.Join(stringParams, ",")
+
+	return fmt.Sprintf("%s:%s", c.CommandType, result)
+}
+
 func (c *Command) ToString() string {
 	parameters := c.buildBaseParameters()
 
