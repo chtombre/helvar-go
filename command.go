@@ -11,9 +11,10 @@ var default_helvar_termination_char = "#"
 type Command struct {
 	MessageType MessageType
 	CommandType CommandType
-	Params []CommandParameter
-	Address string
-	Result string
+	Params      []CommandParameter
+	Address     string
+	Result      string
+	IsPartial   bool
 }
 
 type CommandParameter struct {
@@ -30,6 +31,7 @@ type CommandType string
 
 const (
 	QUERY_CLUSTERS CommandType = "101"
+	QUERY_ROUTERS CommandType = "102"
 	QUERY_GROUP_DESCRIPTION CommandType = "105"
 	QUERY_DEVICE_DESCRIPTION CommandType = "106"
 	QUERY_DEVICE_TYPES_AND_ADDRESSES CommandType = "100"
@@ -106,6 +108,10 @@ func (c *Command) ToIdentifier() string {
 	var parameters []CommandParameter
 	parameters = append(parameters, c.Params...)
 
+	if c.Address != "" {
+		parameters = append(parameters, CommandParameter{ADDRESS, c.Address})
+	}
+
 	var stringParams []string
 	for _, param := range parameters {
 		stringParams = append(stringParams, param.ToString())
@@ -153,7 +159,6 @@ func ParseCommand(input string) (*Command, error) {
 	params := parseParams(res[4])
 	address := strings.ReplaceAll(res[5], "@", "")
 	result := res[7]
-	_ = result
 
 	return &Command{
 		CommandType: CommandType(commandType),
@@ -162,6 +167,7 @@ func ParseCommand(input string) (*Command, error) {
 		Address: address,
 		Result: result,
 	}, nil
+
 }
 
 func parseParams(input string) []CommandParameter{

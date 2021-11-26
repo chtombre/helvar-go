@@ -4,32 +4,63 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sync"
 
 	. "github.com/chtombre/helvar-go"
 )
 
 func main() {
-	router := Router{
-		Host: "10.40.105.10",
-		Port: 50000,
+
+	routers := []Router {
+		{Host: "10.40.168.50", Port: 50000},
+		{Host: "10.40.168.51", Port: 50000},
+		{Host: "10.40.168.52", Port: 50000},
+		{Host: "10.40.168.53", Port: 50000},
+		{Host: "10.40.168.54", Port: 50000},
+		{Host: "10.40.168.55", Port: 50000},
 	}
 
-	defer router.Disconnect()
+	sumDevices := 0
 
-	router.Initialize()
+	var wg sync.WaitGroup
 
+	defer func() {
+		for idx := range routers {
+			router := routers[idx]
+			router.Disconnect()
+		}
+	}()
+
+	for idx := range routers {
+		router := routers[idx]
+		wg.Add(1)
+		router.Initialize()
+		go func() {
+			defer wg.Done()
+			groups, err := router.GetGroups()
+			if err != nil {
+
+			}
+
+			for idx := range groups {
+				group := groups[idx]
+				sumDevices += len(group.Devices)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	fmt.Printf("Found %d devices", sumDevices)
+	fmt.Println("Press 'Enter' to continue...")
+	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+func GetGroups (router *Router) []Group {
 	groups, err := router.GetGroups()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
-	sumDevices := 0
-	for _, g := range groups {
-		sumDevices += len(g.Devices)
-	}
-
-	fmt.Printf("Found %d groups and %d devices", len(groups), sumDevices)
-	fmt.Println("Press 'Enter' to continue...")
-	bufio.NewReader(os.Stdin).ReadBytes('\n')
+	return groups
 }

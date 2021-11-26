@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,7 +28,7 @@ type Router struct {
 	commandReceived *sync.Cond
 	commandsToSend chan Command
 
-	commandsReceived map[string]Command
+	commandsReceived sync.Map
 
 	keepAlive chan bool
 }
@@ -42,7 +43,7 @@ func (r *Router) Initialize(){
 		r.Connect()
 	}
 
-	r.commandsReceived = make(map[string]Command)
+	r.commandsReceived = sync.Map{}
 }
 
 
@@ -59,6 +60,8 @@ func (r *Router) Connect() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+
+	fmt.Printf("Connection established with %s \n", r.Host)
 
 	//setup channel for responses
 
@@ -93,22 +96,32 @@ func (r *Router) Reconnect() {
 func (r *Router) Listener(){
 	c := bufio.NewReader(r.connection)
 	for r.connected {
-		response, err := c.ReadString('#')
+		responseString, err := c.ReadString('#')
 		if err != nil {
 			//skip for now
 		}
 
-		println("Response received", response)
-		command, err := ParseCommand(response)
-		if err != nil {
-			//skip for now
-		}
+		//possible multiple responses
+		responses := strings.Split(responseString, "$")
+		for i, response := range responses {
+			fmt.Printf("Response received from router %s: %s \n", r.Host, response)
 
-		//If someone could explain what this is supposed to do? I just followed a tutorial on internet, and it just works :-p
-		r.commandReceived.L.Lock()
-		r.commandsReceived[command.ToIdentifier()] = *command
-		r.commandReceived.Broadcast()
-		r.commandReceived.L.Unlock()
+			command, err := ParseCommand(response)
+			if err != nil {
+				//skip for now
+			}
+
+			//could command be partial?
+			isPartial := i == 0 && len(responses) > 1
+			command.IsPartial = isPartial
+
+			//If someone could explain what this is supposed to do? I just followed a tutorial on internet, and it just works :-p
+			r.commandReceived.L.Lock()
+			commandId := command.ToIdentifier()
+			r.commandsReceived.Store(commandId, command) // r.commandsReceived[command.ToIdentifier()] = *command
+			r.commandReceived.Broadcast()
+			r.commandReceived.L.Unlock()
+		}
 	}
 }
 
@@ -122,19 +135,33 @@ func (r *Router) SendCommand(command Command) (string, error) {
 		}
 	}
 
-	checkForResponse := func() Command {
+	result := ""
+
+	checkForResponse := func() *Command {
 		commandId := command.ToIdentifier()
-		response, found := r.commandsReceived[commandId]
+		response, found := r.commandsReceived.LoadAndDelete(commandId) // r.commandsReceived[commandId]
 		if found {
-			delete(r.commandsReceived, commandId)
-			return response
+			//r.commandsReceived.Delete(commandId)
+			//delete(r.commandsReceived, commandId)
+			return response.(*Command)
+
 		}
-		return Command{}
+		return &Command{}
 	}
 
 	responseCommand := checkForResponse()
 	if responseCommand.MessageType != "" {
-		return responseCommand.Result, nil
+		if responseCommand.MessageType == MT_ERROR {
+			return "", errors.New(responseCommand.Result)
+		} else if responseCommand.IsPartial {
+			result = responseCommand.Result
+		} else {
+			if result != "" {
+				//Return joined result
+				return fmt.Sprintf(result, ",", responseCommand.Result), nil
+			}
+			return responseCommand.Result, nil
+		}
 	}
 
 	for responseCommand.MessageType == "" {
@@ -145,6 +172,9 @@ func (r *Router) SendCommand(command Command) (string, error) {
 		responseCommand := checkForResponse()
 		r.commandReceived.L.Unlock()
 		if responseCommand.MessageType != "" {
+			if responseCommand.MessageType == MT_ERROR {
+				return "", errors.New(responseCommand.Result)
+			}
 			return responseCommand.Result, nil
 		}
 	}
@@ -157,13 +187,14 @@ func (r *Router) ExecuteCommands() {
 		command := <- r.commandsToSend
 		strCommand := command.ToString()
 
-		println("Sendt command: %s", strCommand)
+		fmt.Printf("Sendt command for router %s: %s \n", r.Host, strCommand)
+
 		_, err := r.connection.Write([]byte(strCommand))
 		if err != nil {
 			println("Write to server failed:", err.Error())
 			//	os.Exit(1)
 		}
-		time.Sleep(1 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		//Tell keepalive that we just sent command to router, no need for pinging
 		//If it's full, continue
