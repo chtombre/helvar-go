@@ -85,6 +85,7 @@ func (r *Router) Disconnect() {
 	r.connected = false
 
 	close(r.keepAlive)
+	close(r.commandsToSend)
 	//Log
 }
 
