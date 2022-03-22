@@ -81,11 +81,11 @@ func (r *Router) Connect() {
 }
 
 func (r *Router) Disconnect() {
-	r.connection.Close()
-	r.connected = false
-
 	close(r.keepAlive)
 	close(r.commandsToSend)
+	
+	r.connection.Close()
+	r.connected = false
 	//Log
 }
 
